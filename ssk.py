@@ -1,17 +1,15 @@
+##########################################################################
+# Supplementary Functions
 __author__ = 'sskqgfnnh'
+##########################################################################
+
 
 import torch
 import random
 import numpy as np
 
-# def test_loss_fun(x, y):
-#     z = x-y
-#     z = z * z
-#     z = np.sum(z, axis=1)
-#     z = np.sqrt(z)
-#     return z.mean()
 
-
+# 不同的数字给不同的颜色
 def ColorSample(num):
     if num > 256 ** 3:
         print('color size is more than 256^3')
@@ -24,6 +22,8 @@ def ColorSample(num):
     r = color_sample % 256
     return np.hstack((r.reshape(len(r), -1), g.reshape(len(g), -1), b.reshape(len(b), -1)))
 
+
+#  
 def PlotData(source_data, neural_data, plot_type=0, savename = './test.txt'):
     print("PlotCube: source_data shape = {}".format(source_data.shape))
     print("PlotCube: neural_data shape = {}".format(neural_data.shape))
