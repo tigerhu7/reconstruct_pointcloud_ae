@@ -41,7 +41,7 @@ def PlotData(source_data, neural_data, plot_type=0, savename = './test.txt'):
             t = tuple(neural_data[i, :])  # 把所有的神经元 取出来~~
         
 
-        if t in d:  # 就是说， 便利到某一个样本点时， 所激活的神经元与之前的某一个是一模一样的话， 那么就给这个组合+1
+        if t in d:  # 就是说， 遍历到某一个样本点时， 所激活的神经元与之前的某一个是一模一样的话， 那么就给这个组合+1
             d[t] = d[t] + 1
         else: # 否则， 就置为0
             d.setdefault(t, 0)
@@ -71,19 +71,44 @@ def PlotData(source_data, neural_data, plot_type=0, savename = './test.txt'):
     print('color_data shape = {}'.format(cdata.shape))
 
 
-
     # 把
     #fwriter = open("colored_data.txt", "w")
+
+    arr = []
     fwriter = open( savename, "w")
     for i in range(numX):
         my_str = ""
+
+        this_arr = []
         for j in range(source_data.shape[1]):
             my_str = my_str + str(source_data[i, j]) + " "
+            this_arr.append(source_data[i,j])
         for k in range(cdata.shape[1]):
             my_str = my_str + str(cdata[i, k]) + " "
+            this_arr.append(cdata[i,k])
+
         my_str = my_str + "\n"
         fwriter.write(my_str)
+        arr.append(this_arr)
     fwriter.close()
-    return source_data
 
 
+    # 原始的~~~~~~
+    if 0:
+        # 把
+        #fwriter = open("colored_data.txt", "w")
+        fwriter = open( savename, "w")
+        for i in range(numX):
+            my_str = ""
+            for j in range(source_data.shape[1]):
+                my_str = my_str + str(source_data[i, j]) + " "
+            for k in range(cdata.shape[1]):
+                my_str = my_str + str(cdata[i, k]) + " "
+            my_str = my_str + "\n"
+            fwriter.write(my_str)
+        fwriter.close()
+
+        return source_data
+
+
+    return np.array(arr)

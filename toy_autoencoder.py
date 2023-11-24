@@ -19,6 +19,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter  
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 import numpy as np
 from numpy import genfromtxt
@@ -40,11 +42,12 @@ print( 'Torch Version?? ', torch.__version__ )
 #-------------------------------------------------------------------------------------
 model_name = 'Arch_Spiral'
 
-train_model = False
-save_checkpoint = False
+train_model, save_checkpoint = False, False    # 这个True 的话， 就会把模型改了~~~~
+#train_model, save_checkpoint = True, True
+
+
 get_result = True
 get_meshlab_result = True
-
 
 
 print('*** Model Name *** ', model_name)
@@ -53,22 +56,35 @@ print('Save Model Checkpoint ?? ', save_checkpoint)
 print('Get Result ?? ', get_result)
 print('Meshlab Result ?? ', get_meshlab_result)
 
-datadir = '/home/tigerhu7/MintHD/Work/Playground/reconstruct_pointcloud_ae/DataSamples'
-result_dir = '/home/tigerhu7/MintHD/Work/Playground/reconstruct_pointcloud_ae/Results/test_230702'
+
+import os
+# Get the directory of the current file
+current_directory = os.path.dirname(os.path.abspath(__file__))
+print("Directory of the current file:", current_directory)
+
+
+work_dir = current_directory
+data_dir = work_dir+'/DataSamples/'
+model_dir = work_dir+'/Models/'
+
+result_dir = work_dir + '/Results/test_231122'
 os.makedirs( result_dir, exist_ok=True)
 
-writer = SummaryWriter('/home/tigerhu7/MintHD/Work/Playground/reconstruct_pointcloud_ae/logs')
+writer = SummaryWriter( work_dir+'/logs')
 
 # GROUND TRUTH
 #-------------------------------------------------------------------------------------
 # Archimedean spiral
-# rho(theta) = (a+b*theta)*  (  cos(w*theta)  , sin(w*theta)  )
+# rho(theta) = (a+b*theta)*( cos(w*theta), sin(w*theta) )
+xx = 9
 
 a = 0.01
 b = 0.06
 w = 5
-
-T = 1.3
+#T = 1.618
+T = 1.1
+#T = 0.8
+#T = 0.3
 theta_series = np.arange(0, T, 0.001)
 
 
@@ -79,7 +95,7 @@ rho_y = (a+b*theta_series)*np.sin(w*theta_series)
 
 dataset = np.vstack((rho_x, rho_y)).T
 
-import matplotlib.pyplot as plt
+
 #plt.plot(rho_y, rho_x)
 #plt.show()
 
@@ -88,9 +104,9 @@ import matplotlib.pyplot as plt
 phi_theta = theta_series
 
 
-np.savetxt(datadir+'/arch_spiral.txt', dataset, delimiter=';')
-np.savetxt(datadir+'/arch_spiral_meshlab.txt', np.column_stack((dataset, np.zeros(dataset.shape[0]))), delimiter=';')
-
+np.savetxt( data_dir+'/arch_spiral.txt', dataset, delimiter=';' )
+#np.savetxt( data_dir+'/arch_spiral_meshlab.txt', np.column_stack((dataset, np.zeros(dataset.shape[0]))), delimiter=';' )
+np.savetxt( data_dir+'/meshlab_input_arch_spiral_3D.txt', np.column_stack((dataset, np.zeros(dataset.shape[0]))), delimiter=';' )
 
 
 
@@ -115,27 +131,6 @@ class autoencoder(nn.Module):
         self.layer10 = nn.Linear(32  , 64  )
         self.layer11 = nn.Linear(64  , 128  )
         self.layer12 = nn.Linear(128  , 2)
-
-
-
-    # def __init__(self):
-
-    #     super(autoencoder, self).__init__()
-    #     self.layer1 = nn.Linear(2, 128 * 3 * 2)
-    #     self.layer2 = nn.Linear(128 * 3 * 2, 64 * 3 * 2)
-    #     self.layer3 = nn.Linear(64 * 3 * 2, 32 * 3 * 2)
-    #     self.layer4 = nn.Linear(32 * 3 * 2, 16 * 3 * 2)
-    #     self.layer5 = nn.Linear(16 * 3 * 2, 16 * 3)
-    #     self.layer6 = nn.Linear(16 * 3, 1)
-
-    #     self.layer7 = nn.Linear(1, 16 * 3)
-    #     self.layer8 = nn.Linear(16 * 3, 16 * 3 * 2)
-    #     self.layer9 = nn.Linear(16 * 3 * 2, 32 * 3 * 2)
-    #     self.layer10 = nn.Linear(32 * 3 * 2, 64 * 3 * 2)
-    #     self.layer11 = nn.Linear(64 * 3 * 2, 128 * 3 * 2)
-    #     self.layer12 = nn.Linear(128 * 3 * 2, 2)
-
-
 
     # 然后 这些 layers 按照一定的顺序 排列好～～～～
     def forward(self, x):
@@ -249,6 +244,154 @@ def test_loss_fun(x, y):
     return z.mean()
 
 
+def train_loop(in_dataset):
+
+    #【1】 Hyper Parameters  超参数
+    # num_epochs = 8000
+    # batch_size = 258
+    # learning_rate = 8.0e-5
+
+
+    num_epochs = 20000
+    batch_size = 230
+    learning_rate = 9.0e-5
+
+    # num_epochs = 7000
+    # batch_size = 300
+    # learning_rate = 1.0e-5
+
+    dataset = in_dataset+0
+
+    # 【2】 Choose Dataset
+    #dataset = genfromtxt(model_name + '.csv', delimiter=',')
+    np.random.shuffle(dataset)
+    dataset_size = dataset.shape[0]
+    train_size = dataset_size
+    dataset_tensor = torch.from_numpy(dataset).float()
+    dataloader = DataLoader(dataset_tensor, batch_size=batch_size, shuffle=True)
+
+    # 【3】 Model and Optimization
+    model = autoencoder().cuda()   # 模型使用GPU
+    criterion = nn.MSELoss()  # loss 使用 MSE
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=learning_rate, weight_decay=0)  # 优化方法， 使用 Adam
+
+    # 【2.5】 Pick Testing Data from Dataset
+    """prepare test data"""
+    testdata_tensor = torch.from_numpy(dataset).float()   # numpy 的值转变为 tensor
+    numX = dataset_size  # - train_size
+    testloader = DataLoader(testdata_tensor, batch_size=numX, shuffle=False)
+    
+    # 【4】 Train and Test Loss
+    # 应该是训练， 然后使用 test data 算一算loss， 每一个 epoch 做这么一次~~~
+    # 每一个 epoch， 用 test data 算一下loss，
+    # 如果 loss 减少了， 就更新模型的checkpoint
+
+    min_tot_loss = 1e99
+    """training"""
+    for epoch in range(num_epochs):
+        for data in dataloader:
+            img = data
+            img = img.view(img.size(0), -1)
+            img = Variable(img).cuda()
+            # ===================forward=====================
+            y, z, _ = model(img)
+            loss = criterion(y, img)
+            # ===================backward====================a
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        """test"""
+        with torch.no_grad():
+            for data in testloader:
+                point = data
+                point = point.view(point.size(0), -1)
+                point = Variable(point).cuda()
+                point_new, _, _ = model(point)
+                # test_loss0 = criterion(point, point_new)
+                test_loss = test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
+                #test_loss = ssk.test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
+                # ===================log========================
+
+                
+                if loss.item() < min_tot_loss:
+                    min_tot_loss = loss.item()
+                    print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e} *'
+                        .format(epoch + 1, num_epochs, loss.item(), test_loss))
+                    
+                    
+                    writer.add_scalar("train_loss", loss.item(), epoch)
+                    writer.add_scalar('test_loss', test_loss, epoch)
+
+                    if save_checkpoint:   # 已经训练好的， 就不要再更新了， 
+                        torch.save(model, model_dir + model_name + '_autoencoder.pth')
+                else:
+                    print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e}'
+                        .format(epoch + 1, num_epochs, loss.item(), test_loss))
+
+
+    return model
+
+
+def test_loop(testdata, model):
+
+
+    # 对数据进行增强， batch归类， 等等， 用于训练或者测试的操作~~~~
+    numX = testdata.shape[0]
+    bsize = numX # batch size
+    numX = numX - numX % bsize
+    print('data num = {}'.format(numX))
+    testdata_tensor = torch.from_numpy(testdata[0:numX, :]).float()
+    testloader = DataLoader(testdata_tensor, batch_size=bsize, shuffle=False)
+    
+
+    output_list = []
+    neural_list = []
+    latent_list = []
+    for data in testloader:
+        
+        # 初始数据
+        x = data
+        x = x.view(x.size(0), -1)
+        x = Variable(x).cuda()
+        
+        # 模型推理
+        y, z, s = model(x)   # 输入已知的model， 进行 inference 推理
+        x = data.numpy()
+        y = y.data.cpu().numpy()
+        y = np.reshape(y, (bsize, -1))
+        z = z.data.cpu().numpy()
+        z = np.reshape(z, (bsize, -1))
+        
+        # 数据输出
+        output_list.append(y)  # 进行 decode 之后的 data
+        latent_list.append(z)  # latent space 的数据
+        neural_list.append(s)  # 激活的神经元的数据
+
+
+    # 结果转换为 可以展示的形式 
+    neural_data = np.zeros(shape=[numX, neural_list[0].shape[1]])
+    index = 0
+    for neural in neural_list:
+        s_shape = neural.shape
+        neural_data[index: index + s_shape[0], :] = neural
+        index = index + s_shape[0]
+    index = 0
+    latent_data = np.zeros(shape=[numX, dataset.shape[1]-1 ])
+    for ldata in latent_list:
+        latent_data[index: index + ldata.shape[0], :] = ldata
+        index = index + ldata.shape[0]
+    index = 0
+    output_data = np.zeros(shape=[numX, dataset.shape[1]])
+    for odata in output_list:
+        output_data[index: index + odata.shape[0], :] = odata
+        index = index + odata.shape[0]
+    
+    return output_data, latent_data, neural_data
+
+
+
 # MAIN 
 #---------------------------------------------------------------------------------------
 if __name__ == '__main__':
@@ -256,86 +399,93 @@ if __name__ == '__main__':
     # TRAIN  训练模型~
     #-----------------------------------------------------------------------------------
     if train_model == True:
-
-        # 【1】 Hyper Parameters  超参数
-        # num_epochs = 5000
-        # batch_size = 258
-        # learning_rate = 8.0e-5
-
-        num_epochs = 7000
-        batch_size = 300
-        learning_rate = 1.0e-5
-
-
-        # 【2】 Choose Dataset
-        #dataset = genfromtxt(model_name + '.csv', delimiter=',')
-        np.random.shuffle(dataset)
-        dataset_size = dataset.shape[0]
-        train_size = dataset_size
-        dataset_tensor = torch.from_numpy(dataset).float()
-        dataloader = DataLoader(dataset_tensor, batch_size=batch_size, shuffle=True)
-
-        # 【3】 Model and Optimization
-        model = autoencoder().cuda()   # 模型使用GPU
-        criterion = nn.MSELoss()  # loss 使用 MSE
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=learning_rate, weight_decay=0)  # 优化方法， 使用 Adam
-
-        # 【2.5】 Pick Testing Data from Dataset
-        """prepare test data"""
-        testdata_tensor = torch.from_numpy(dataset).float()   # numpy 的值转变为 tensor
-        numX = dataset_size  # - train_size
-        testloader = DataLoader(testdata_tensor, batch_size=numX, shuffle=False)
         
-        # 【4】 Train and Test Loss
-        # 应该是训练， 然后使用 test data 算一算loss， 每一个 epoch 做这么一次~~~
-        # 每一个 epoch， 用 test data 算一下loss，
-        # 如果 loss 减少了， 就更新模型的checkpoint
+        if 1:
+            model = train_loop(dataset)
 
-        min_tot_loss = 1e99
-        """training"""
-        for epoch in range(num_epochs):
-            for data in dataloader:
-                img = data
-                img = img.view(img.size(0), -1)
-                img = Variable(img).cuda()
-                # ===================forward=====================
-                y, z, _ = model(img)
-                loss = criterion(y, img)
-                # ===================backward====================
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+        if 0:
 
-            """test"""
-            with torch.no_grad():
-                for data in testloader:
-                    point = data
-                    point = point.view(point.size(0), -1)
-                    point = Variable(point).cuda()
-                    point_new, _, _ = model(point)
-                    # test_loss0 = criterion(point, point_new)
-                    test_loss = test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
-                    #test_loss = ssk.test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
-                    # ===================log========================
+            # 【1】 Hyper Parameters  超参数
+            # num_epochs = 5000
+            # batch_size = 258
+            # learning_rate = 8.0e-5
 
-                    
-                    if loss.item() < min_tot_loss:
-                        min_tot_loss = loss.item()
-                        print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e} *'
-                            .format(epoch + 1, num_epochs, loss.item(), test_loss))
+            num_epochs = 7000
+            batch_size = 300
+            learning_rate = 1.0e-5
+
+
+            # 【2】 Choose Dataset
+            #dataset = genfromtxt(model_name + '.csv', delimiter=',')
+            np.random.shuffle(dataset)
+            dataset_size = dataset.shape[0]
+            train_size = dataset_size
+            dataset_tensor = torch.from_numpy(dataset).float()
+            dataloader = DataLoader(dataset_tensor, batch_size=batch_size, shuffle=True)
+
+            # 【3】 Model and Optimization
+            model = autoencoder().cuda()   # 模型使用GPU
+            criterion = nn.MSELoss()  # loss 使用 MSE
+            optimizer = torch.optim.Adam(
+                model.parameters(), lr=learning_rate, weight_decay=0)  # 优化方法， 使用 Adam
+
+            # 【2.5】 Pick Testing Data from Dataset
+            """prepare test data"""
+            testdata_tensor = torch.from_numpy(dataset).float()   # numpy 的值转变为 tensor
+            numX = dataset_size  # - train_size
+            testloader = DataLoader(testdata_tensor, batch_size=numX, shuffle=False)
+            
+            # 【4】 Train and Test Loss
+            # 应该是训练， 然后使用 test data 算一算loss， 每一个 epoch 做这么一次~~~
+            # 每一个 epoch， 用 test data 算一下loss，
+            # 如果 loss 减少了， 就更新模型的checkpoint
+
+            min_tot_loss = 1e99
+            """training"""
+            for epoch in range(num_epochs):
+                for data in dataloader:
+                    img = data
+                    img = img.view(img.size(0), -1)
+                    img = Variable(img).cuda()
+                    # ===================forward=====================
+                    y, z, _ = model(img)
+                    loss = criterion(y, img)
+                    # ===================backward====================
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                """test"""
+                with torch.no_grad():
+                    for data in testloader:
+                        point = data
+                        point = point.view(point.size(0), -1)
+                        point = Variable(point).cuda()
+                        point_new, _, _ = model(point)
+                        # test_loss0 = criterion(point, point_new)
+                        test_loss = test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
+                        #test_loss = ssk.test_loss_fun(point.data.cpu().numpy(), point_new.data.cpu().numpy())
+                        # ===================log========================
+
                         
-                        
-                        writer.add_scalar("train_loss", loss.item(), epoch)
-                        writer.add_scalar('test_loss', test_loss, epoch)
+                        if loss.item() < min_tot_loss:
+                            min_tot_loss = loss.item()
+                            print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e} *'
+                                .format(epoch + 1, num_epochs, loss.item(), test_loss))
+                            
+                            
+                            writer.add_scalar("train_loss", loss.item(), epoch)
+                            writer.add_scalar('test_loss', test_loss, epoch)
 
-                        if save_checkpoint:   # 已经训练好的， 就不要再更新了， 
-                            torch.save(model, '/home/tigerhu7/MintHD/Work/Playground/reconstruct_pointcloud_ae/Models/' + model_name + '_autoencoder.pth')
-                    else:
-                        print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e}'
-                            .format(epoch + 1, num_epochs, loss.item(), test_loss))
+                            if save_checkpoint:   # 已经训练好的， 就不要再更新了， 
+                                torch.save(model, model_dir + model_name + '_autoencoder.pth')
+                        else:
+                            print('epoch [{}/{}], loss:{:.4e}, test_loss:{:.4e}'
+                                .format(epoch + 1, num_epochs, loss.item(), test_loss))
+
+
     else:
-        model = torch.load('/home/tigerhu7/MintHD/Work/Playground/reconstruct_pointcloud_ae/Models/' + model_name + '_autoencoder.pth')
+        model = torch.load( model_dir + model_name + '_autoencoder.pth')
 
 
     # GENERATE  训练好了之后， 保存加上颜色的结果，
@@ -352,13 +502,75 @@ if __name__ == '__main__':
         #testdata = genfromtxt(model_name + '.csv', delimiter=',')
         # 使用输入的dataset
         if 1:
-            testdata = dataset[0:-1:3] + 0
+            testdata = dataset[0:-1:3] + 0   # 挑选一些点
+            test_theta_series = theta_series[0:-1:3] + 0
+
+            if 1:
+                output_data, latent_data, neural_data = test_loop(testdata, model)
+
+            if 0:
+                # 对数据进行增强， batch归类， 等等， 用于训练或者测试的操作~~~~
+                numX = testdata.shape[0]
+                bsize = numX # batch size
+                numX = numX - numX % bsize
+                print('data num = {}'.format(numX))
+                testdata_tensor = torch.from_numpy(testdata[0:numX, :]).float()
+                testloader = DataLoader(testdata_tensor, batch_size=bsize, shuffle=False)
+                
+
+                output_list = []
+                neural_list = []
+                latent_list = []
+                for data in testloader:
+                    
+                    # 初始数据
+                    x = data
+                    x = x.view(x.size(0), -1)
+                    x = Variable(x).cuda()
+                    
+                    # 模型推理
+                    y, z, s = model(x)   # 输入已知的model， 进行 inference 推理
+                    x = data.numpy()
+                    y = y.data.cpu().numpy()
+                    y = np.reshape(y, (bsize, -1))
+                    z = z.data.cpu().numpy()
+                    z = np.reshape(z, (bsize, -1))
+                    
+                    # 数据输出
+                    output_list.append(y)  # 进行 decode 之后的 data
+                    latent_list.append(z)  # latent space 的数据
+                    neural_list.append(s)  # 激活的神经元的数据
 
 
-        if 0:  # 或者使用 整幅图
+                # 结果转换为 可以展示的形式 
+                neural_data = np.zeros(shape=[numX, neural_list[0].shape[1]])
+                index = 0
+                for neural in neural_list:
+                    s_shape = neural.shape
+                    neural_data[index: index + s_shape[0], :] = neural
+                    index = index + s_shape[0]
+                index = 0
+                latent_data = np.zeros(shape=[numX, dataset.shape[1]-1 ])
+                for ldata in latent_list:
+                    latent_data[index: index + ldata.shape[0], :] = ldata
+                    index = index + ldata.shape[0]
+                index = 0
+                output_data = np.zeros(shape=[numX, dataset.shape[1]])
+                for odata in output_list:
+                    output_data[index: index + odata.shape[0], :] = odata
+                    index = index + odata.shape[0]
+                
+
+            # 这些点， 再加上一些颜色， 然后保存下来~~~
+            input_with_color = ssk.PlotData(testdata, neural_data, plot_type=0, savename = result_dir+'/test_neural.txt')
+            output_with_color = ssk.PlotData(output_data, neural_data, plot_type=0, savename = result_dir+'/output_neural.txt')
+            latent_with_color = ssk.PlotData(latent_data, neural_data, plot_type=0, savename = result_dir + '/latent_neural.txt')
+
+
+        # 或者使用 整幅图, 用来显示ambient space partition~~~~~~
+        if 1:  
             row_max = np.max(dataset[:,0])
             row_min = np.min(dataset[:,0])
-            
             col_max = np.max(dataset[:,1])
             col_min = np.min(dataset[:,1])
 
@@ -366,132 +578,182 @@ if __name__ == '__main__':
             y = np.linspace(col_min, col_max, 100)            
             X, Y = np.meshgrid(x, y)
 
-            testdata = np.vstack(( X.flatten(), Y.flatten() )).T
+            testdata_fullplane = np.vstack(( X.flatten(), Y.flatten() )).T
+            output_data_fullplane, latent_data_fullplane, neural_data_fullplane = test_loop(testdata_fullplane, model)
 
-
-
-
-        # 对数据进行增强， batch归类， 等等， 用于训练或者测试的操作~~~~
-        numX = testdata.shape[0]
-        bsize = numX # batch size
-        numX = numX - numX % bsize
-        print('data num = {}'.format(numX))
-        testdata_tensor = torch.from_numpy(testdata[0:numX, :]).float()
-        testloader = DataLoader(testdata_tensor, batch_size=bsize, shuffle=False)
-        
-
-        output_list = []
-        neural_list = []
-        latent_list = []
-        for data in testloader:
+            # 这些点， 再加上一些颜色， 然后保存下来~~~
+            input_fullplane_with_color = ssk.PlotData(testdata_fullplane, neural_data_fullplane, plot_type = 0, savename = result_dir+'/test_neural_fullplane.txt')
+            # output_fullplane_with_color = ssk.PlotData(output_data_fullplane, neural_data_fullplane, plot_type=0, savename = result_dir+'/output_neural_fullplane.txt')
+            # latent_fullplane_with_color = ssk.PlotData(latent_data_fullplane, neural_data_fullplane, plot_type=0, savename = result_dir + '/latent_neural_fullplane.txt')
             
-            # 初始数据
-            x = data
-            x = x.view(x.size(0), -1)
-            x = Variable(x).cuda()
-            
-            # 模型推理
-            y, z, s = model(x)   # 输入已知的model， 进行 inference 推理
-            x = data.numpy()
-            y = y.data.cpu().numpy()
-            y = np.reshape(y, (bsize, -1))
-            z = z.data.cpu().numpy()
-            z = np.reshape(z, (bsize, -1))
-            
-            # 数据输出
-            output_list.append(y)  # 进行 decode 之后的 data
-            latent_list.append(z)  # latent space 的数据
-            neural_list.append(s)  # 激活的神经元的数据
+            input_fullplane_with_color_2 = ssk.PlotData(testdata_fullplane, neural_data_fullplane, plot_type = 2, savename = result_dir+'/test_neural_fullplane_2.txt')
+   
+
+        # 直接做显示  2*3 的 subplots
+        if 1:
+         
+            #fig = plt.figure()
+            #ax = fig.add_subplot(111, projection='3d')
+
+            #fig, axs = plt.subplots(2,3, figsize = (12, 8))
+            fig, ([ax1, ax2, ax3], [ax4, ax5, ax6])= plt.subplots(2,3, figsize = (12, 8))
+
+            # ax.set_xlim(  np.min([row_min, col_min]), np.max([row_max, col_max]) )
+            # ax.set_ylim(  np.min([row_min, col_min]), np.max([row_max, col_max]) )
+            # ax.set_zlim(  -0.02, 0.02)
+            # ax.set_aspect('equal')
+
+            color_list = plt.cm.rainbow(np.linspace(0, 1, testdata.shape[0]))  # Generate rainbow colors
 
 
-        # 结果转换为 可以展示的形式 
-        neural_data = np.zeros(shape=[numX, neural_list[0].shape[1]])
-        index = 0
-        for neural in neural_list:
-            s_shape = neural.shape
-            neural_data[index: index + s_shape[0], :] = neural
-            index = index + s_shape[0]
-        index = 0
-        latent_data = np.zeros(shape=[numX, dataset.shape[1]-1 ])
-        for ldata in latent_list:
-            latent_data[index: index + ldata.shape[0], :] = ldata
-            index = index + ldata.shape[0]
-        index = 0
-        output_data = np.zeros(shape=[numX, dataset.shape[1]])
-        for odata in output_list:
-            output_data[index: index + odata.shape[0], :] = odata
-            index = index + odata.shape[0]
-        
-        
-        # # 保存这些点？？？
-        # np.savetxt( result_dir + '/output_' + model_name + '.csv', output_data, delimiter=',')
-        # np.savetxt( result_dir + '/latent_' + model_name + '.csv', latent_data, delimiter=',')
-        # np.savetxt( result_dir + '/neural_' + model_name + '.csv', neural_data, delimiter=',')
+            #color_list = [ this_input[3:6]/255 for this_input in input_with_color ]
+            ax1.scatter( input_with_color[:,0],  input_with_color[:,1], c = color_list, s = 5 ) # You can customize color ('c') and marker style ('marker')
+            ax1.set_xlim(  row_min, row_max )
+            ax1.set_ylim(  col_min, col_max )
+            ax1.set_title( 'input manifold' )
 
 
-        # 这些点， 再加上一些颜色， 然后保存下来~~~
-        ssk.PlotData(testdata, neural_data, plot_type=0, savename = result_dir+'/test_neural.txt')
-        ssk.PlotData(output_data, neural_data, plot_type=0, savename = result_dir+'/output_neural.txt')
-        ssk.PlotData(latent_data, neural_data, plot_type=0, savename = result_dir + '/latent_neural.txt')
+            #color_list = [ this_input[2:5]/255 for this_input in latent_with_color ]
+            ax2.scatter(  test_theta_series,  0*np.arange(latent_with_color[:,0].shape[0]), c = color_list, s = 3 )
+            #ax2.set_xlim(  row_min, row_max )
+            #ax2.set_ylim(  col_min, col_max )
+            ax2.set_title( 'latent representation' )
 
 
+            #color_list = [ this_input[3:6]/255 for this_input in output_with_color ]
+            ax3.scatter( output_with_color[:,0],  output_with_color[:,1], c = color_list, marker='*', s = 3 ) # You can customize color ('c') and marker style ('marker')
+            ax3.set_xlim(  row_min, row_max )
+            ax3.set_ylim(  col_min, col_max )
+            ax3.set_title( 'reconstructed manifold' )
 
 
+            color_list = [ this_input[3:6]/255 for this_input in input_fullplane_with_color ]
+            ax4.scatter( input_fullplane_with_color[:,0],  input_fullplane_with_color[:,1], c = color_list, s = 1 ) # You can customize color ('c') and marker style ('marker')
+            ax4.scatter( input_with_color[:,0],  input_with_color[:,1], c = 'k', s = 1 ) # You can customize color ('c') and marker style ('marker')
+            ax4.set_title( 'encoder decomposition' )
 
-        np.savetxt( result_dir + '/input_arch_spiral.txt', testdata, delimiter=',')
-        np.savetxt( result_dir+'/input_arch_spiral_meshlab.txt', np.column_stack(( testdata, np.zeros(testdata.shape[0]))), delimiter=';')
 
-        np.savetxt( result_dir + '/output_arch_spiral.txt', output_data, delimiter=',')
-        np.savetxt( result_dir+'/output_arch_spiral_meshlab.txt', np.column_stack((output_data, np.zeros(output_data.shape[0]))), delimiter=';')
+            color_list = [ this_input[3:6]/255 for this_input in input_fullplane_with_color_2 ]
+            ax5.scatter( input_fullplane_with_color_2[:,0],  input_fullplane_with_color_2[:,1], c = color_list, s = 1 ) # You can customize color ('c') and marker style ('marker')
+            ax5.scatter( input_with_color[:,0],  input_with_color[:,1], c = 'k', s = 1 ) # You can customize color ('c') and marker style ('marker')
+            ax5.set_title( 'encoder_and_decoder decomposition' )
+
+            plt.show()
 
 
 
-    # 输出为 meshlab 可以展示的格式？？？ 
-    #-----------------------------------------------------------------------------------
-    if get_meshlab_result == True:
+            # # Set labels and title
+            # ax.set_xlabel('X-axis')
+            # ax.set_ylabel('Y-axis')
+            # ax.set_title('3D Point Cloud Visualization')
+
+            # color_list = [ this_input[2:5]/255 for this_input in output_with_color ]
+            # ax.scatter( latent_with_color[:,0],  np.arange( latent_with_color.shape[0] ),  c = color_list, marker='*' ) # You can customize color ('c') and marker style ('marker')
 
 
-        import matplotlib.pyplot as plt
-        #plt.plot(rho_y, rho_x)
-        #plt.show()
-
-        # 【1】 一维流形
-        #-----------------------------------------------------------------------------
-        savename = result_dir+'/test_neural.txt'
-        testdata2 = genfromtxt(savename, delimiter=' ')
-        coords = testdata2[:, 0:2]
-
-        coords = np.hstack((coords, np.zeros(len(coords)).reshape(-1, 1) ))
-
-        colors = testdata2[:, -3:]
-
-        # plt.cla()
-        # for row in range(len(coords)):
-        #     plt.plot(coords[row,1], coords[row, 0], color =  tuple(list( colors[row]/255))  )
-
-        # plt.show()
+            # Show the plot
 
 
-        outdata1 = np.hstack((coords, colors))
-        np.savetxt( result_dir + '/mesh_ambient_' + model_name + '.txt', outdata1, delimiter=',')
+
+        # 直接做显示   简单的~~
+        if 0:
+         
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+
+            ax.set_xlim(  np.min([row_min, col_min]), np.max([row_max, col_max]) )
+            ax.set_ylim(  np.min([row_min, col_min]), np.max([row_max, col_max]) )
+
+            ax.set_zlim(  -0.02, 0.02)
+
+            ax.set_aspect('equal')
+
+            color_list = [ this_input[3:6]/255 for this_input in input_with_color ]
+            ax.scatter( input_with_color[:,0],  input_with_color[:,1], c = color_list, s = 5 ) # You can customize color ('c') and marker style ('marker')
+
+            color_list = [ this_input[3:6]/255 for this_input in output_with_color ]
+            ax.scatter( output_with_color[:,0],  output_with_color[:,1], c = color_list, marker='*', s = 3 ) # You can customize color ('c') and marker style ('marker')
+
+            color_list = [ this_input[3:6]/255 for this_input in input_fullplane_with_color ]
+            #ax.scatter( input_fullplane_with_color[:,0],  input_fullplane_with_color[:,1], c = color_list, s = 1 ) # You can customize color ('c') and marker style ('marker')
+
+            # Set labels and title
+            ax.set_xlabel('X-axis')
+            ax.set_ylabel('Y-axis')
+            ax.set_title('3D Point Cloud Visualization')
+
+            # color_list = [ this_input[2:5]/255 for this_input in output_with_color ]
+            # ax.scatter( latent_with_color[:,0],  np.arange( latent_with_color.shape[0] ),  c = color_list, marker='*' ) # You can customize color ('c') and marker style ('marker')
 
 
-        # 【2】 一维数据
-        #-------------------------------------------------------------------------------
-        savename = result_dir+'/latent_neural.txt'
-        testdata3 = genfromtxt(savename, delimiter=' ')
-        coords = testdata2[:, 0:1]
-        coords = np.hstack((coords, np.zeros((len(coords),2)).reshape(-1, 2) ))
+            # Show the plot
+            plt.show()
 
-        colors = testdata2[:, -3:]
-        outdata2 = np.hstack((coords, colors))
 
-        np.savetxt( result_dir + '/mesh_latent_' + model_name + '.txt', outdata2, delimiter=',')
 
+        # 把结果 保存成文件， 然后在 meshlab 或者其他软件中打开查看
+        if 0:
+
+
+            # # 保存这些点？？？
+            # np.savetxt( result_dir + '/output_' + model_name + '.csv', output_data, delimiter=',')
+            # np.savetxt( result_dir + '/latent_' + model_name + '.csv', latent_data, delimiter=',')
+            # np.savetxt( result_dir + '/neural_' + model_name + '.csv', neural_data, delimiter=',')
+
+
+            # np.savetxt( result_dir + '/input_arch_spiral.txt', testdata, delimiter=',')
+            # np.savetxt( result_dir+'/input_arch_spiral_meshlab.txt', np.column_stack(( testdata, np.zeros(testdata.shape[0]))), delimiter=';')
+
+            # np.savetxt( result_dir + '/output_arch_spiral.txt', output_data, delimiter=',')
+            # np.savetxt( result_dir+'/output_arch_spiral_meshlab.txt', np.column_stack((output_data, np.zeros(output_data.shape[0]))), delimiter=';')
+
+
+            # 输出为 meshlab 可以展示的格式？？？ 
+            #-----------------------------------------------------------------------------------
+            if 1:
+
+                import matplotlib.pyplot as plt
+                #plt.plot(rho_y, rho_x)
+                #plt.show()
+
+                # 【1】 一维流形
+                #-----------------------------------------------------------------------------
+                savename = result_dir+'/test_neural.txt'
+                testdata2 = genfromtxt(savename, delimiter=' ')
+                coords = testdata2[:, 0:2]
+
+                coords = np.hstack((coords, np.zeros(len(coords)).reshape(-1, 1) ))
+
+                colors = testdata2[:, -3:]
+
+                # plt.cla()
+                # for row in range(len(coords)):
+                #     plt.plot(coords[row,1], coords[row, 0], color =  tuple(list( colors[row]/255))  )
+
+                # plt.show()
+
+
+                outdata1 = np.hstack((coords, colors))
+                np.savetxt( result_dir + '/mesh_ambient_' + model_name + '.txt', outdata1, delimiter=',')
+
+
+                # 【2】 一维数据
+                #-------------------------------------------------------------------------------
+                savename = result_dir+'/latent_neural.txt'
+                testdata3 = genfromtxt(savename, delimiter=' ')
+                coords = testdata2[:, 0:1]
+                coords = np.hstack((coords, np.zeros((len(coords),2)).reshape(-1, 2) ))
+
+                colors = testdata2[:, -3:]
+                outdata2 = np.hstack((coords, colors))
+
+                np.savetxt( result_dir + '/mesh_latent_' + model_name + '.txt', outdata2, delimiter=',')
 
 
 
 
     eee = 999
+
+
 
 
